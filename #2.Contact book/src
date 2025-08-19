@@ -1,0 +1,217 @@
+#CODE#
+
+import sqlite3
+from datetime import datetime, timedelta
+
+DB_NAME = "elibrary.db"
+
+# --- Database Setup ---
+def init_db():
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
+    # Books Table
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS books (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        author TEXT NOT NULL,
+        year INTEGER,
+        total_copies INTEGER NOT NULL,
+        available_copies INTEGER NOT NULL
+    )
+    """)
+
+    # Members Table
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS members (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        email TEXT,
+        joined_at TEXT NOT NULL
+    )
+    """)
+
+    # Loans Table
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS loans (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        book_id INTEGER,
+        member_id INTEGER,
+        borrowed_at TEXT NOT NULL,
+        due_at TEXT NOT NULL,
+        returned_at TEXT,
+        FOREIGN KEY(book_id) REFERENCES books(id),
+        FOREIGN KEY(member_id) REFERENCES members(id)
+    )
+    """)
+    conn.commit()
+    conn.close()
+
+# --- Functions ---
+def add_book():
+    title = input("Title: ")
+    author = input("Author: ")
+    year = input("Year: ")
+    total = int(input("Total copies: "))
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("INSERT INTO books(title, author, year, total_copies, available_copies) VALUES (?,?,?,?,?)",
+                (title, author, year, total, total))
+    conn.commit()
+    conn.close()
+    print("[OK] Book added successfully!")
+
+def register_member():
+    name = input("Name: ")
+    email = input("Email: ")
+    joined = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("INSERT INTO members(name, email, joined_at) VALUES (?,?,?)", (name, email, joined))
+    conn.commit()
+    conn.close()
+    print("[OK] Member registered successfully!")
+
+def list_books():
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM books")
+    books = cur.fetchall()
+    conn.close()
+
+    if not books:
+        print("No books found.")
+        return
+    for b in books:
+        print(f"ID:{b[0]} | {b[1]} by {b[2]} ({b[3]}) [{b[5]}/{b[4]} available]")
+
+def list_members():
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM members")
+    members = cur.fetchall()
+    conn.close()
+
+    if not members:
+        print("No members found.")
+        return
+    for m in members:
+        print(f"ID:{m[0]} | {m[1]} | {m[2]} | Joined: {m[3]}")
+
+def borrow_book():
+    book_id = int(input("Book ID: "))
+    member_id = int(input("Member ID: "))
+    days = input("Loan days (default 14): ")
+    days = int(days) if days.strip().isdigit() else 14
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
+    cur.execute("SELECT available_copies FROM books WHERE id=?", (book_id,))
+    book = cur.fetchone()
+    if not book or book[0] <= 0:
+        print("[ERR] No copies available.")
+        conn.close()
+        return
+
+    borrowed_at = datetime.now()
+    due_at = borrowed_at + timedelta(days=days)
+
+    cur.execute("INSERT INTO loans(book_id, member_id, borrowed_at, due_at) VALUES (?,?,?,?)",
+                (book_id, member_id, borrowed_at.strftime("%Y-%m-%d %H:%M:%S"), due_at.strftime("%Y-%m-%d %H:%M:%S")))
+    cur.execute("UPDATE books SET available_copies=available_copies-1 WHERE id=?", (book_id,))
+    conn.commit()
+    conn.close()
+    print(f"[OK] Loan created. Due Date: {due_at.date()}")
+
+def return_book():
+    loan_id = int(input("Loan ID to return: "))
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
+    cur.execute("SELECT book_id FROM loans WHERE id=? AND returned_at IS NULL", (loan_id,))
+    loan = cur.fetchone()
+    if not loan:
+        print("[ERR] Loan not found or already returned.")
+        conn.close()
+        return
+
+    cur.execute("UPDATE loans SET returned_at=? WHERE id=?", (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), loan_id))
+    cur.execute("UPDATE books SET available_copies=available_copies+1 WHERE id=?", (loan[0],))
+    conn.commit()
+    conn.close()
+    print("[OK] Book returned successfully.")
+
+def active_loans():
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT l.id, b.title, m.name, l.due_at
+        FROM loans l
+        JOIN books b ON l.book_id=b.id
+        JOIN members m ON l.member_id=m.id
+        WHERE l.returned_at IS NULL
+    """)
+    loans = cur.fetchall()
+    conn.close()
+
+    if not loans:
+        print("No active loans.")
+        return
+    for l in loans:
+        print(f"Loan ID: {l[0]} | Book: {l[1]} | Member: {l[2]} | Due: {l[3]}")
+
+def overdue_loans():
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT l.id, b.title, m.name, l.due_at
+        FROM loans l
+        JOIN books b ON l.book_id=b.id
+        JOIN members m ON l.member_id=m.id
+        WHERE l.returned_at IS NULL AND datetime(l.due_at) < datetime('now')
+    """)
+    loans = cur.fetchall()
+    conn.close()
+
+    if not loans:
+        print("(none)")
+        return
+    for l in loans:
+        print(f"Loan ID: {l[0]} | Book: {l[1]} | Member: {l[2]} | Due: {l[3]}")
+
+# --- Menu ---
+def menu():
+    init_db()
+    while True:
+        print("\n=== e-Library ===")
+        print("1) Add Book")
+        print("2) Register Member")
+        print("3) List Books")
+        print("4) List Members")
+        print("5) Borrow Book")
+        print("6) Return Book")
+        print("7) Active Loans")
+        print("8) Overdue Loans")
+        print("0) Exit")
+
+        choice = input("Select: ")
+        if choice == "1": add_book()
+        elif choice == "2": register_member()
+        elif choice == "3": list_books()
+        elif choice == "4": list_members()
+        elif choice == "5": borrow_book()
+        elif choice == "6": return_book()
+        elif choice == "7": active_loans()
+        elif choice == "8": overdue_loans()
+        elif choice == "0":
+            print("Exiting... Goodbye!")
+            break
+        else:
+            print("[ERR] Invalid choice.")
+
+if __name__ == "__main__":
+    menu()

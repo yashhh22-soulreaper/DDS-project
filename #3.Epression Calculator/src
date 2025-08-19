@@ -1,1 +1,29 @@
+#CODE#
 
+import math
+
+def calculator():
+    print("=== Expression Calculator ===")
+    print("Type 'exit' to quit.")
+    print("You can use operators (+, -, *, /, **, (), %) and math functions (sqrt, sin, cos, tan, log).")
+    print("Example: (2 + 3) * 4 or math.sqrt(16)\n")
+
+    while True:
+        expression = input("Enter expression: ")
+
+        if expression.lower() == "exit":
+            print("Goodbye! 👋")
+            break
+
+        try:
+            # Evaluate safely with math functions
+            result = eval(expression, {"__builtins__": None}, {"math": math})
+            print("Result:", result)
+        except ZeroDivisionError:
+            print("❌ Error: Division by zero is not allowed.")
+        except Exception as e:
+            print("❌ Invalid expression. Please try again.")
+
+# Run the calculator
+if __name__ == "__main__":
+    calculator()

@@ -1,0 +1,166 @@
+import sqlite3
+from datetime import datetime, timedelta
+from pathlib import Path
+
+DB_PATH = Path("elibrary.db")
+
+# Database schema
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS books (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    author TEXT NOT NULL,
+    year INTEGER,
+    total_copies INTEGER NOT NULL CHECK(total_copies >= 1),
+    available_copies INTEGER NOT NULL CHECK(available_copies >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS members (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    email TEXT UNIQUE,
+    joined_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS loans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL,
+    member_id INTEGER NOT NULL,
+    borrowed_at TEXT NOT NULL,
+    due_at TEXT NOT NULL,
+    returned_at TEXT,
+    FOREIGN KEY(book_id) REFERENCES books(id),
+    FOREIGN KEY(member_id) REFERENCES members(id)
+);
+"""
+
+def connect():
+    conn = sqlite3.connect(DB_PATH)
+    return conn
+
+def init_db():
+    with connect() as conn:
+        conn.executescript(SCHEMA)
+
+def now():
+    return datetime.now().isoformat(timespec="seconds")
+
+# --- Features ---
+def add_book():
+    title = input("Title: ")
+    author = input("Author: ")
+    year = input("Year: ")
+    total = int(input("Total copies: "))
+    with connect() as conn:
+        conn.execute("INSERT INTO books(title,author,year,total_copies,available_copies) VALUES (?,?,?,?,?)",
+                     (title, author, year if year else None, total, total))
+        print("[OK] Book added")
+
+def register_member():
+    name = input("Name: ")
+    email = input("Email (optional): ")
+    with connect() as conn:
+        conn.execute("INSERT INTO members(name,email,joined_at) VALUES (?,?,?)",
+                     (name, email if email else None, now()))
+        print("[OK] Member registered")
+
+def list_books():
+    with connect() as conn:
+        rows = conn.execute("SELECT id,title,author,year,available_copies,total_copies FROM books").fetchall()
+    if not rows:
+        print("(no books)")
+        return
+    for r in rows:
+        print(f"{r[0]} | {r[1]} — {r[2]} ({r[3]}) [{r[4]}/{r[5]} available]")
+
+def list_members():
+    with connect() as conn:
+        rows = conn.execute("SELECT id,name,email,joined_at FROM members").fetchall()
+    if not rows:
+        print("(no members)")
+        return
+    for r in rows:
+        print(f"{r[0]} | {r[1]} | {r[2]} | joined {r[3]}")
+
+def borrow_book():
+    book_id = int(input("Book id: "))
+    member_id = int(input("Member id: "))
+    days = input("Loan days (default 14): ")
+    days = int(days) if days.strip().isdigit() else 14
+    with connect() as conn:
+        cur = conn.cursor()
+        book = cur.execute("SELECT available_copies FROM books WHERE id=?", (book_id,)).fetchone()
+        if not book or book[0] <= 0:
+            print("[ERR] No copies available")
+            return
+        due = datetime.now() + timedelta(days=days)
+        cur.execute("INSERT INTO loans(book_id,member_id,borrowed_at,due_at) VALUES (?,?,?,?)",
+                    (book_id, member_id, now(), due.isoformat(timespec="seconds")))
+        cur.execute("UPDATE books SET available_copies=available_copies-1 WHERE id=?", (book_id,))
+        print(f"[OK] Loan created, due {due.date()}")
+
+def return_book():
+    loan_id = int(input("Loan id to return: "))
+    with connect() as conn:
+        cur = conn.cursor()
+        loan = cur.execute("SELECT book_id FROM loans WHERE id=? AND returned_at IS NULL", (loan_id,)).fetchone()
+        if not loan:
+            print("[ERR] Loan not found or already returned")
+            return
+        cur.execute("UPDATE loans SET returned_at=? WHERE id=?", (now(), loan_id))
+        cur.execute("UPDATE books SET available_copies=available_copies+1 WHERE id=?", (loan[0],))
+        print("[OK] Returned successfully")
+
+def active_loans():
+    with connect() as conn:
+        rows = conn.execute("""
+            SELECT l.id,b.title,m.name,l.due_at
+            FROM loans l JOIN books b ON b.id=l.book_id
+            JOIN members m ON m.id=l.member_id
+            WHERE l.returned_at IS NULL
+        """).fetchall()
+    if not rows:
+        print("(no active loans)")
+        return
+    for r in rows:
+        print(f"loan_id={r[0]} | book={r[1]} | member={r[2]} | due={r[3].split('T')[0]}")
+
+def overdue_loans():
+    with connect() as conn:
+        rows = conn.execute("""
+            SELECT l.id,b.title,m.name,l.due_at
+            FROM loans l JOIN books b ON b.id=l.book_id
+            JOIN members m ON m.id=l.member_id
+            WHERE l.returned_at IS NULL AND datetime(l.due_at) < datetime('now')
+        """).fetchall()
+    if not rows:
+        print("(none)")
+        return
+    for r in rows:
+        print(f"loan_id={r[0]} | book={r[1]} | member={r[2]} | due={r[3].split('T')[0]}")
+
+# --- Menu ---
+def menu():
+    init_db()
+    while True:
+        print("\n=== e-Library ===")
+        print("1) Add book  2) Register member  3) Search/List books")
+        print("4) Borrow book  5) Return book   6) List members")
+        print("7) Active loans  8) Overdue loans  0) Exit")
+        choice = input("Select: ")
+        if choice == "1": add_book()
+        elif choice == "2": register_member()
+        elif choice == "3": list_books()
+        elif choice == "4": borrow_book()
+        elif choice == "5": return_book()
+        elif choice == "6": list_members()
+        elif choice == "7": active_loans()
+        elif choice == "8": overdue_loans()
+        elif choice == "0":
+            print("Bye!")
+            break
+        else:
+            print("[ERR] Invalid choice")
+
+if __name__ == "__main__":
+    menu()
